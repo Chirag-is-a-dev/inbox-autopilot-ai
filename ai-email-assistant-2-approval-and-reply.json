@@ -1,0 +1,674 @@
+{
+  "name": "AI Email Assistant - 2 Approval and Reply",
+  "nodes": [
+    {
+      "parameters": { "updates": ["messages"], "options": {} },
+      "id": "ff67601b-8f85-497e-8b07-0d88f68d3aaf",
+      "name": "WhatsApp: Incoming Message",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [240, 304],
+      "credentials": { "whatsAppTriggerApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp OAuth account" } }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "k1", "name": "ownerWhatsApp", "type": "string", "value": "YOUR_WHATSAPP_NUMBER" },
+            { "id": "k2", "name": "phoneNumberId", "type": "string", "value": "YOUR_PHONE_NUMBER_ID" }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "09e3b454-1966-462a-890c-4f28543a77c5",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [480, 304]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "m1", "name": "fromNumber", "value": "={{ String($json.messages?.[0]?.from ?? '').replace(/[^0-9]/g, '') }}", "type": "string" },
+            { "id": "m2", "name": "command", "value": "={{ ($json.messages?.[0]?.text?.body ?? $json.messages?.[0]?.interactive?.button_reply?.id ?? '').trim().split(/\\s+/)[0].toUpperCase() }}", "type": "string" },
+            { "id": "m3", "name": "approvalId", "value": "={{ (($json.messages?.[0]?.text?.body ?? $json.messages?.[0]?.interactive?.button_reply?.id ?? '').trim().split(/\\s+/)[1] ?? '').toUpperCase() }}", "type": "string" },
+            { "id": "m4", "name": "editText", "value": "={{ ($json.messages?.[0]?.text?.body ?? $json.messages?.[0]?.interactive?.button_reply?.id ?? '').trim().replace(/^\\S+\\s+\\S+\\s*/, '') }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "ce37d9cc-f37b-436c-a28c-0dfc5b66ab96",
+      "name": "Parse Command",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [720, 304]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 1 },
+          "conditions": [
+            {
+              "leftValue": "={{ String($('Config').item.json.ownerWhatsApp).replace(/[^0-9]/g, '').length > 5 }}",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true },
+              "rightValue": ""
+            },
+            {
+              "leftValue": "={{ $json.fromNumber }}",
+              "operator": { "type": "string", "operation": "equals" },
+              "rightValue": "={{ String($('Config').item.json.ownerWhatsApp).replace(/[^0-9]/g, '') }}"
+            },
+            {
+              "leftValue": "={{ [\"APPROVE\",\"REJECT\",\"EDIT\"].includes($json.command) }}",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "829d1ef4-c253-47b0-a27e-95e01a7116d6",
+      "name": "Authorized Number & Valid Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [960, 304]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $json.approvalId }}" } ] },
+        "limit": 1
+      },
+      "id": "bfd4b82d-f9d4-48be-a338-c4d044d4b8c5",
+      "name": "Lookup Approval Request",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [1216, 288],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 1 },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.approvalId ?? '' }}",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "40310360-611c-4317-b47f-0389be055bc5",
+      "name": "Request Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1440, 288]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "route",
+              "value": "={{ $json.approvalStatus !== 'PENDING' ? 'processed' : ($now.toUTC().toISO() > $json.expiresAtIso ? 'expired' : ($('Parse Command').item.json.command === 'REJECT' ? 'reject' : ($('Parse Command').item.json.command === 'EDIT' && !$('Parse Command').item.json.editText ? 'edit_empty' : 'send'))) }}",
+              "type": "string"
+            },
+            { "id": "e2", "name": "command", "value": "={{ $('Parse Command').item.json.command }}", "type": "string" },
+            { "id": "e3", "name": "finalReply", "value": "={{ $('Parse Command').item.json.command === 'EDIT' ? $('Parse Command').item.json.editText : $json.aiDraft }}", "type": "string" },
+            { "id": "e4", "name": "newApprovalStatus", "value": "={{ $('Parse Command').item.json.command === 'EDIT' ? 'APPROVED_EDITED' : 'APPROVED' }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "62041dc4-5a94-49ea-9ea5-136ed0d2f14a",
+      "name": "Evaluate Request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1712, 128]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+                "conditions": [ { "leftValue": "={{ $json.route }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "expired" } ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "expired"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+                "conditions": [ { "leftValue": "={{ $json.route }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "processed" } ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "already processed"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+                "conditions": [ { "leftValue": "={{ $json.route }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "edit_empty" } ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "edit without text"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+                "conditions": [ { "leftValue": "={{ $json.route }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "reject" } ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reject"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 1 },
+                "conditions": [ { "leftValue": "={{ $json.route }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "send" } ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approve or edit"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fdad6e7f-cdfb-4688-93c0-e343bbe74187",
+      "name": "Route Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [1920, 160]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $json.approvalId }}" }, { "keyName": "approvalStatus", "keyValue": "PENDING" } ] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": { "approvalStatus": "EXPIRED", "sendStatus": "NOT_SENT", "decidedAt": "={{ $now.toUTC().toISO() }}" },
+          "schema": [
+            { "id": "approvalStatus", "displayName": "approvalStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "sendStatus", "displayName": "sendStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "decidedAt", "displayName": "decidedAt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a9a0e022-293c-4ee4-b819-1e1f54a4bfe3",
+      "name": "Log: Expired",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [2176, -112]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "=⏰ Approval {{ $('Evaluate Request').item.json.approvalId }} expired (24h limit). No email was sent.",
+        "additionalFields": {}
+      },
+      "id": "172c8a79-b93b-40dc-9db1-5f67c50ba5ba",
+      "name": "WhatsApp: Expired Notice",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [2416, -112],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "=ℹ️ Approval {{ $('Evaluate Request').item.json.approvalId }} was already handled (status: {{ $('Evaluate Request').item.json.approvalStatus }}, send: {{ $('Evaluate Request').item.json.sendStatus }}). Nothing was sent again.",
+        "additionalFields": {}
+      },
+      "id": "6a12aa54-4ef5-4bf9-91a5-fcda5ae41f2f",
+      "name": "WhatsApp: Already Processed",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [2176, 32],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "=✏️ Please include your replacement text:\nEDIT {{ $('Evaluate Request').item.json.approvalId }} <your reply text>\nNothing was sent.",
+        "additionalFields": {}
+      },
+      "id": "1eca866b-e174-4068-9091-6342326333cd",
+      "name": "WhatsApp: Edit Needs Text",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [2176, 208],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $json.approvalId }}" }, { "keyName": "approvalStatus", "keyValue": "PENDING" } ] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": { "approvalStatus": "REJECTED", "sendStatus": "NOT_SENT", "decidedAt": "={{ $now.toUTC().toISO() }}" },
+          "schema": [
+            { "id": "approvalStatus", "displayName": "approvalStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "sendStatus", "displayName": "sendStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "decidedAt", "displayName": "decidedAt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b987a282-a63f-45c7-9e2f-d36ea7aed135",
+      "name": "Log: Rejected",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [2176, 416]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "=🚫 Rejected {{ $('Evaluate Request').item.json.approvalId }}. No email was sent.",
+        "additionalFields": {}
+      },
+      "id": "1d5cfa6e-5a00-45a7-9def-bf9ad79a9c0c",
+      "name": "WhatsApp: Rejected Notice",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [2400, 416],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $json.approvalId }}" }, { "keyName": "approvalStatus", "keyValue": "PENDING" } ] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "approvalStatus": "={{ $json.newApprovalStatus }}",
+            "finalReply": "={{ $json.finalReply }}",
+            "sendStatus": "SENDING",
+            "decidedAt": "={{ $now.toUTC().toISO() }}"
+          },
+          "schema": [
+            { "id": "approvalStatus", "displayName": "approvalStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "finalReply", "displayName": "finalReply", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "sendStatus", "displayName": "sendStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "decidedAt", "displayName": "decidedAt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a77aea2a-1814-429b-a7e7-07168e70c0ce",
+      "name": "Lock Request: Mark Approved",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [2144, 768]
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Evaluate Request').item.json.messageId }}",
+        "emailType": "text",
+        "message": "={{ $('Evaluate Request').item.json.finalReply }}",
+        "options": { "appendAttribution": false, "replyToSenderOnly": true }
+      },
+      "id": "57ec4cd1-843b-4da4-891c-7c7780b6b65e",
+      "name": "Gmail: Reply In Same Thread",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [2384, 768],
+      "credentials": { "gmailOAuth2": { "id": "YOUR_CREDENTIAL_ID", "name": "Gmail account" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "v1", "name": "replyMessageId", "value": "={{ $json.id }}", "type": "string" },
+            { "id": "v2", "name": "replyThreadId", "value": "={{ $json.threadId }}", "type": "string" },
+            { "id": "v3", "name": "threadVerified", "value": "={{ $json.threadId === $('Evaluate Request').item.json.threadId }}", "type": "boolean" },
+            { "id": "v4", "name": "sendStatus", "value": "={{ $json.threadId === $('Evaluate Request').item.json.threadId ? 'SENT' : 'SENT_THREAD_MISMATCH' }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5d1297f6-d3ec-4d91-b01a-aea737888502",
+      "name": "Verify Same Thread",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [2640, 560]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $('Evaluate Request').item.json.approvalId }}" } ] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sendStatus": "={{ $json.sendStatus }}",
+            "replyMessageId": "={{ $json.replyMessageId }}",
+            "replyThreadId": "={{ $json.replyThreadId }}"
+          },
+          "schema": [
+            { "id": "sendStatus", "displayName": "sendStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "replyMessageId", "displayName": "replyMessageId", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "replyThreadId", "displayName": "replyThreadId", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2a4a1ec6-4dcb-4d49-a045-0dd1bcb9074c",
+      "name": "Log: Reply Sent",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [2880, 560]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "={{ $('Verify Same Thread').item.json.threadVerified ? '✅ Reply sent in the original thread.' : '⚠️ Reply sent, but Gmail returned a different thread ID - please check.' }}\n*ID:* {{ $('Evaluate Request').item.json.approvalId }}\n*To:* {{ $('Evaluate Request').item.json.senderEmail }}\n*Subject:* {{ $('Evaluate Request').item.json.subject }}\n*Thread:* {{ $('Verify Same Thread').item.json.replyThreadId }}\n*Mode:* {{ $('Evaluate Request').item.json.command === 'EDIT' ? 'your edited text' : 'AI draft as proposed' }}",
+        "additionalFields": {}
+      },
+      "id": "347a54a9-206d-41c6-a622-36a9932ea1a8",
+      "name": "WhatsApp: Send Confirmation",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [3120, 560],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $('Evaluate Request').item.json.approvalId }}" } ] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": { "sendStatus": "FAILED" },
+          "schema": [
+            { "id": "sendStatus", "displayName": "sendStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "99d39038-4d51-44ff-866d-c939f06a1973",
+      "name": "Log: Send Failed",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [2656, 928]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "=❌ Gmail reply for {{ $('Evaluate Request').item.json.approvalId }} FAILED. The email was not sent. Check the n8n execution and the log table.",
+        "additionalFields": {}
+      },
+      "id": "25d7876e-8643-4081-8513-78f325e0aee6",
+      "name": "WhatsApp: Send Failed Notice",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [2880, 928],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('Config').item.json.phoneNumberId }}",
+        "recipientPhoneNumber": "={{ $('Config').item.json.ownerWhatsApp }}",
+        "textBody": "=❓ No approval request found for ID {{ $('Parse Command').item.json.approvalId || '(missing)' }}. Nothing was sent.\nFormat: APPROVE AP-XXXX | REJECT AP-XXXX | EDIT AP-XXXX <new text>",
+        "additionalFields": {}
+      },
+      "id": "d8b8eabd-b702-46f8-a990-9b9d45052423",
+      "name": "WhatsApp: Unknown ID",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [1712, 400],
+      "credentials": { "whatsAppApi": { "id": "YOUR_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    },
+    {
+      "parameters": { "rule": { "interval": [ { "field": "hours" } ] } },
+      "id": "89bc85ed-d071-4908-8579-57323458e697",
+      "name": "Hourly Expiry Sweep",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 1008]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalStatus", "keyValue": "PENDING" } ] },
+        "returnAll": true
+      },
+      "id": "5406532c-953d-4346-9677-f698b0226f43",
+      "name": "Get Pending Requests",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [480, 1008]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 1 },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.expiresAtIso < $now.toUTC().toISO() }}",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5353e3b6-955d-4f21-8d03-3d759bfd1e9f",
+      "name": "Past 24h Expiry?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [720, 1008]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_DATA_TABLE_ID", "cachedResultName": "email_assistant_log" },
+        "matchType": "allConditions",
+        "filters": { "conditions": [ { "keyName": "approvalId", "keyValue": "={{ $json.approvalId }}" }, { "keyName": "approvalStatus", "keyValue": "PENDING" } ] },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": { "approvalStatus": "EXPIRED", "sendStatus": "NOT_SENT", "decidedAt": "={{ $now.toUTC().toISO() }}" },
+          "schema": [
+            { "id": "approvalStatus", "displayName": "approvalStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "sendStatus", "displayName": "sendStatus", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "decidedAt", "displayName": "decidedAt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a5dfc22c-6474-4021-b3bc-7e8a4a7c0454",
+      "name": "Mark Expired (Sweep)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [960, 1008]
+    },
+    {
+      "parameters": {
+        "content": "## Workflow 2 - Approval handler\nOnly the number in Config > ownerWhatsApp can trigger anything. Messages from any other number are silently dropped.\nCommands: APPROVE <ID> | REJECT <ID> | EDIT <ID> <new text>.\nThe Lock step flips PENDING to APPROVED before Gmail runs, so a duplicate APPROVE can never send twice.\n\n**Setup:** in the Config node replace YOUR_WHATSAPP_NUMBER and YOUR_PHONE_NUMBER_ID, replace YOUR_DATA_TABLE_ID in every data table node with your `email_assistant_log` table, and connect your own Gmail OAuth2, WhatsApp Business Cloud and WhatsApp Trigger credentials.",
+        "height": 416,
+        "width": 384,
+        "color": 4
+      },
+      "id": "5571aeb7-92e3-47e4-b3a7-9efd0eaaf029",
+      "name": "Sticky Note cec5b85f",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-304, 128]
+    },
+    {
+      "parameters": {
+        "content": "### 1. Receive & authorize\nWhatsApp trigger → **Config** (owner number + phone number ID) → **Parse Command** splits the message or button id into command, approvalId and editText.\nThe IF only lets through the owner's number with APPROVE / REJECT / EDIT. Everything else is silently dropped.",
+        "height": 334,
+        "width": 920,
+        "color": 5
+      },
+      "id": "1c6cda28-0336-4aa3-b2be-8a901fe0f044",
+      "name": "Note: 1 Receive & Authorize",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [192, 128]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Look up request\nFinds the log row by approvalId.\nIf no row exists, **WhatsApp: Unknown ID** tells the owner the correct command format and nothing is sent.",
+        "height": 326,
+        "width": 440,
+        "color": 6
+      },
+      "id": "0b5cbd2d-2d4c-482d-a846-e9f8d397ceac",
+      "name": "Note: 2 Look Up Request",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1152, 128]
+    },
+    {
+      "parameters": {
+        "content": "### 3. Evaluate & route\n**Route Decision** outputs: expired (past 24h), already processed, EDIT without text, reject, approve-or-edit.\nEach outcome is logged and the owner is notified. An email can only go out if the request is still PENDING.",
+        "height": 282,
+        "width": 460,
+        "color": 3
+      },
+      "id": "d8c8649a-72cc-4967-902f-9328ecae5bd6",
+      "name": "Note: 3 Evaluate & Route",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1632, 0]
+    },
+    {
+      "parameters": {
+        "content": "### 4. Lock & send\n**Lock Request** flips PENDING → APPROVED (or APPROVED_EDITED) with sendStatus SENDING *before* Gmail runs, so a duplicate APPROVE can never send twice.\nGmail replies in the original thread, to the sender only.\nEDIT replaces the AI draft with your own text.",
+        "height": 296,
+        "width": 460,
+        "color": 4
+      },
+      "id": "7575f013-c601-4f48-90fa-eee7af476ddd",
+      "name": "Note: 4 Lock & Send",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2096, 624]
+    },
+    {
+      "parameters": {
+        "content": "### 5. Verify & confirm\n**Verify Same Thread** compares the threadId Gmail returns with the original.\n**Log: Reply Sent** stores SENT or SENT_THREAD_MISMATCH, and WhatsApp confirms to the owner (with a warning on mismatch).",
+        "height": 246,
+        "width": 640,
+        "color": 2
+      },
+      "id": "1862042c-5baa-4b99-835c-11f5676447d4",
+      "name": "Note: 5 Verify & Confirm",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2608, 448]
+    },
+    {
+      "parameters": {
+        "content": "### Send failure\nIf Gmail errors, the row is marked FAILED and the owner gets a WhatsApp alert. No email was sent.",
+        "height": 226,
+        "width": 460,
+        "color": 7
+      },
+      "id": "00cb190b-e724-43df-af08-cfe0f352069b",
+      "name": "Note: Send Failure",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2640, 816]
+    },
+    {
+      "parameters": {
+        "content": "### Hourly expiry sweep (separate trigger)\nEvery hour, finds PENDING requests whose expiresAtIso has passed and marks them EXPIRED, so stale approvals can't be acted on later.",
+        "height": 262,
+        "width": 936
+      },
+      "id": "ce339c46-2588-4b1e-94cd-4907256b899d",
+      "name": "Note: Hourly Expiry Sweep",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [208, 880]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp: Incoming Message": { "main": [ [ { "node": "Config", "type": "main", "index": 0 } ] ] },
+    "Config": { "main": [ [ { "node": "Parse Command", "type": "main", "index": 0 } ] ] },
+    "Parse Command": { "main": [ [ { "node": "Authorized Number & Valid Command?", "type": "main", "index": 0 } ] ] },
+    "Authorized Number & Valid Command?": { "main": [ [ { "node": "Lookup Approval Request", "type": "main", "index": 0 } ] ] },
+    "Lookup Approval Request": { "main": [ [ { "node": "Request Found?", "type": "main", "index": 0 } ] ] },
+    "Request Found?": {
+      "main": [
+        [ { "node": "Evaluate Request", "type": "main", "index": 0 } ],
+        [ { "node": "WhatsApp: Unknown ID", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Evaluate Request": { "main": [ [ { "node": "Route Decision", "type": "main", "index": 0 } ] ] },
+    "Route Decision": {
+      "main": [
+        [ { "node": "Log: Expired", "type": "main", "index": 0 } ],
+        [ { "node": "WhatsApp: Already Processed", "type": "main", "index": 0 } ],
+        [ { "node": "WhatsApp: Edit Needs Text", "type": "main", "index": 0 } ],
+        [ { "node": "Log: Rejected", "type": "main", "index": 0 } ],
+        [ { "node": "Lock Request: Mark Approved", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Log: Expired": { "main": [ [ { "node": "WhatsApp: Expired Notice", "type": "main", "index": 0 } ] ] },
+    "Log: Rejected": { "main": [ [ { "node": "WhatsApp: Rejected Notice", "type": "main", "index": 0 } ] ] },
+    "Lock Request: Mark Approved": { "main": [ [ { "node": "Gmail: Reply In Same Thread", "type": "main", "index": 0 } ] ] },
+    "Gmail: Reply In Same Thread": {
+      "main": [
+        [ { "node": "Verify Same Thread", "type": "main", "index": 0 } ],
+        [ { "node": "Log: Send Failed", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Verify Same Thread": { "main": [ [ { "node": "Log: Reply Sent", "type": "main", "index": 0 } ] ] },
+    "Log: Reply Sent": { "main": [ [ { "node": "WhatsApp: Send Confirmation", "type": "main", "index": 0 } ] ] },
+    "Log: Send Failed": { "main": [ [ { "node": "WhatsApp: Send Failed Notice", "type": "main", "index": 0 } ] ] },
+    "Hourly Expiry Sweep": { "main": [ [ { "node": "Get Pending Requests", "type": "main", "index": 0 } ] ] },
+    "Get Pending Requests": { "main": [ [ { "node": "Past 24h Expiry?", "type": "main", "index": 0 } ] ] },
+    "Past 24h Expiry?": { "main": [ [ { "node": "Mark Expired (Sweep)", "type": "main", "index": 0 } ] ] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1", "binaryMode": "separate" },
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}
